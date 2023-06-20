@@ -18,55 +18,55 @@ server_socket.bind((server_host, server_port))
 server_socket.listen(5)
 print('Server listening on {}:{}'.format(server_host, server_port))
 
-# List to store all the client threads
-client_threads = []
+# Dictionary to store client sockets and their corresponding usernames
+clients = {}
 
-def handle_client(client_socket):
+def broadcast_message(sender_socket, message):
+    encrypted_message = cipher_suite.encrypt(message.encode())
+    
+    for client_socket in clients:
+        if client_socket != sender_socket:
+            client_socket.send(encrypted_message)
+
+def handle_client(client_socket, client_address):
     # Send the encryption key to the client
     client_socket.send(key)
     
+    # Receive the username from the client
+    username = client_socket.recv(1024).decode()
+    clients[client_socket] = username
+    print('Connected: {}:{}'.format(client_address[0], client_address[1]), 'Username:', username)
+    
     while True:
-        # Receive the encrypted message from the client
-        encrypted_message = client_socket.recv(1024)
-        
-        # Decrypt the message
-        decrypted_message = cipher_suite.decrypt(encrypted_message).decode()
-        
-        print('Received:', decrypted_message)
-        
-        # Get the message to send from the server
-        message = input('Server: ')
-        
-        # Encrypt the message
-        encrypted_message = cipher_suite.encrypt(message.encode())
-        
-        # Send the encrypted message to the client
-        client_socket.send(encrypted_message)
-        
-        # Close the connection if the client requests it
-        if message.lower() == 'bye':
+        try:
+            # Receive the encrypted message from the client
+            encrypted_message = client_socket.recv(1024)
+            
+            if not encrypted_message:
+                break
+            
+            # Decrypt the message
+            decrypted_message = cipher_suite.decrypt(encrypted_message).decode()
+            
+            print('Received from', username + ':', decrypted_message)
+            
+            # Broadcast the message to all connected clients
+            broadcast_message(client_socket, username + ': ' + decrypted_message)
+        except Exception as e:
+            print('Error:', str(e))
             break
     
     # Close the client socket
     client_socket.close()
+    del clients[client_socket]
+    print('Disconnected:', username)
 
 while True:
     # Accept a client connection
     client_socket, client_address = server_socket.accept()
-    print('Connected to client:', client_address)
     
     # Create a new thread for the client connection
-    client_thread = threading.Thread(target=handle_client, args=(client_socket,))
+    client_thread = threading.Thread(target=handle_client, args=(client_socket, client_address))
     client_thread.start()
-    
-    # Add the client thread to the list
-    client_threads.append(client_thread)
-    
-    # Remove finished threads from the list
-    client_threads = [thread for thread in client_threads if thread.is_alive()]
-
-# Close all client sockets and the server socket
-for client_thread in client_threads:
-    client_thread.join()
 
 server_socket.close()
