@@ -1,17 +1,13 @@
 import socket
 import threading
-import paramiko
-
-from cryptography.fernet import Fernet
-
-# Generate a unique key for encryption
-key = Fernet.generate_key()
-cipher_suite = Fernet(key)
+import time
+import signal
+import sys
 
 # Create a socket object
 server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 server_host = 'localhost'
-server_port = 8888
+server_port = 12345
 
 # Bind the socket to a specific address and port
 server_socket.bind((server_host, server_port))
@@ -23,63 +19,48 @@ print('Server listening on {}:{}'.format(server_host, server_port))
 # Dictionary to store client sockets and their corresponding usernames
 clients = {}
 
-# SSH key file paths
-private_key_path = 'Ssh_Keys/NIK_KEYGEN.pem'
-public_key_path = 'Ssh_Keys/NIK_KEYGEN.pub'
+def handle_client(client_socket, client_address):
+    # Receive the secret key from the client
+    secret_key = client_socket.recv(1024).decode()
+    print('Received secret key from {}: {}'.format(client_address[0], secret_key))
 
-def check_auth(username, key):
+    # Log the time when the client connects
+    connect_time = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())
+    print('Client connected from {} at {}'.format(client_address[0], connect_time))
+
     # Add your custom authentication logic here
-    # You can check the username and public key against your authorized keys list or database
-    # Return True if the authentication is successful, otherwise return False
-    return True
+    # You can compare the secret key against a stored key or database entry
+    # For simplicity, we are using a fixed secret key "password"
+    if secret_key == 'nikuu':
+        client_socket.send('success'.encode())
 
-def ssh_handler(client_channel, addr):
-    username = client_channel.get_username()
-    if username and check_auth(username, client_channel.get_remote_server_key()):
-        clients[client_channel] = username
-        print('Connected:', username)
-        while True:
-            try:
-                command = client_channel.recv(1024)
-                if not command:
-                    break
-                decrypted_message = cipher_suite.decrypt(command).decode()
-                print('Received from', username + ':', decrypted_message)
-                broadcast_message(client_channel, username + ': ' + decrypted_message)
-            except Exception as e:
-                print('Error:', str(e))
-                break
-        client_channel.close()
-        del clients[client_channel]
-        print('Disconnected:', username)
+        # Log the time when the client successfully authenticates
+        auth_time = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())
+        print('Client authenticated from {} at {}'.format(client_address[0], auth_time))
+
+        clients[client_socket] = client_address
+        print('Authentication successful for:', client_address[0])
     else:
-        print('Authentication failed for:', client_channel.get_username())
-        client_channel.close()
+        client_socket.send('failure'.encode())
+        client_socket.close()
+        print('Authentication failed for:', client_address[0])
 
-def broadcast_message(sender, message):
-    encrypted_message = cipher_suite.encrypt(message.encode())
-    for client_channel in clients:
-        if client_channel != sender:
-            client_channel.sendall(encrypted_message)
+def close_server(signal, frame):
+    print('Closing server...')
+    for client_socket in clients:
+        client_socket.close()
+    server_socket.close()
+    sys.exit(0)
 
-# Start the SSH server
+# Register the signal handler for Ctrl+C
+signal.signal(signal.SIGINT, close_server)
+
 while True:
-    try:
-        # Accept a client connection
-        client_socket, client_address = server_socket.accept()
-        
-        # SSH server configuration
-        ssh_server = paramiko.Transport(client_socket)
-        ssh_server.load_server_moduli()
-        ssh_server.add_server_key(paramiko.RSAKey(filename=private_key_path))
-        ssh_server.start_server(server=server_socket)
-        
-        # Create a new thread for the SSH client connection
-        client_thread = threading.Thread(target=ssh_handler, args=(ssh_server, client_address))
-        client_thread.start()
-    except Exception as e:
-        print('Error:', str(e))
-        break
+    # Accept a client connection
+    client_socket, client_address = server_socket.accept()
 
-# Close the server socket
+    # Create a new thread for the client connection
+    client_thread = threading.Thread(target=handle_client, args=(client_socket, client_address))
+    client_thread.start()
+
 server_socket.close()
